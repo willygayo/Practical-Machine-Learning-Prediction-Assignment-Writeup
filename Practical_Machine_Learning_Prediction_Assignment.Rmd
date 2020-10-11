@@ -1,0 +1,151 @@
+---
+title: "Practical Machine Learning Prediction Assignment Writeup"
+author: "Willy Gayo"
+date: "10/11/2020"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Overview
+
+The goal of this project is to predict the manner in which the "classe" variable in the training set did their exercise. This is a documentation on how to build the model, how did the cross validation was used, the expected out of sample error, and the reason of the choices. The prediction model will also be used to predict 20 different test cases.
+
+
+## Dataset
+
+Using devices such as Jawbone Up, Nike FuelBand, and Fitbit it is now possible to collect a large amount of data about personal activity relatively inexpensively. These type of devices are part of the quantified self movement – a group of enthusiasts who take measurements about themselves regularly to improve their health, to find patterns in their behavior, or because they are tech geeks. One thing that people regularly do is quantify how much of a particular activity they do, but they rarely quantify how well they do it. In this project, your goal will be to use data from accelerometers on the belt, forearm, arm, and dumbell of 6 participants. They were asked to perform barbell lifts correctly and incorrectly in 5 different ways. More information is available from the website here: http://web.archive.org/web/20161224072740/http:/groupware.les.inf.puc-rio.br/har (see the section on the Weight Lifting Exercise Dataset).
+
+The training data for this project are available here: https://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv
+
+The test data are available here: https://d396qusza40orc.cloudfront.net/predmachlearn/pml-testing.csv
+
+
+## Data Preparation
+
+Loading the needed R packages and setting a seed.
+
+```{r}
+suppressWarnings(suppressMessages(library(caret)))
+suppressWarnings(suppressMessages(library(randomForest)))
+suppressWarnings(suppressMessages(library(e1071)))
+set.seed(2020)
+```
+
+Downloading the datasets.
+
+```{r}
+trainingUrl <- "https://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv"
+quizUrl <- "https://d396qusza40orc.cloudfront.net/predmachlearn/pml-testing.csv"
+training.df <- read.csv(url(trainingUrl), na.strings=c("NA","","#DIV/0!"))
+quiz.df <- read.csv(url(quizUrl) , na.strings=c("NA", "", "#DIV/0!"))
+```
+
+Let us clean our datasets.
+
+```{r}
+training.df <- training.df[,colSums(is.na(training.df)) == 0]
+dim(training.df)
+quiz.df <-quiz.df[,colSums(is.na(quiz.df)) == 0]
+dim(quiz.df)
+```
+
+Let us remove the non-predictors from the datasets, which includes the index, subject name, time and window variables.
+
+```{r}
+Training.df <- training.df[,-c(1:7)]
+Quiz.df <- quiz.df[,-c(1:7)]
+dim(Training.df)
+dim(Quiz.df)
+```
+
+Let us verify if there are values almost 0 in the training dataset.
+
+```{r}
+Training.nzv <- nzv(Training.df[,-ncol(Training.df)],saveMetrics=TRUE)
+```
+
+There are no values almost 0 in the training dataset. Let us count the number of variables retained.
+
+```{r}
+rownames(Training.nzv)
+dim(Training.nzv)[1]
+```
+
+
+## Modeling
+
+Let us partition the training dataset into two subsets (training set 75% and validation set 25%).
+
+```{r}
+inTrain <- createDataPartition(Training.df$classe, p = 0.75, list = FALSE)
+inTraining <- Training.df[inTrain,]
+inTest <- Training.df[-inTrain,]
+dim(inTraining)
+dim(inTest)
+```
+
+We will construct the model using cross validation or reload using the cached model. Cross Validation achieved with trainControl method set to “cv”. We will use Random Forest Model with Cross Validation.
+
+```{r}
+myModelFilename <- "myModel.RData"
+if (!file.exists(myModelFilename)) {
+
+    suppressWarnings(suppressMessages(library(doParallel)))
+    ncores <- makeCluster(detectCores() - 1)
+    registerDoParallel(cores=ncores)
+    getDoParWorkers()    
+    
+    # use Random Forest method with Cross Validation, 4 folds
+    myModel <- train(classe ~ .
+                , data = inTraining
+                , method = "rf"
+                , metric = "Accuracy" 
+                , preProcess=c("center", "scale")
+                , trControl=trainControl(method = "cv"
+                                        , number = 4
+                                        , p= 0.75
+                                        , allowParallel = TRUE 
+                                        )
+                )
+
+    save(myModel, file = "myModel.RData")
+    stopCluster(ncores)
+} else {
+    load(file = myModelFilename, verbose = TRUE)
+}
+```
+
+
+## Prediction
+
+Let us predict the activity performed using the training file derived test subset
+
+```{r}
+predTest <- predict(myModel, newdata=inTest)
+```
+
+Let us check the accuracy of the model by comparing the predictions to the actual results
+
+```{r}
+confusionMatrix(predTest,as.factor(inTest$classe))
+```
+
+Note that the out-of-sample error of 0.0065 or 0.65%. Hence, the accuracy is very high, at 0.9935, and this figure lies within the 95% confidence interval.
+
+Let us now use our final model. The 27 variables were tried at each split and the reported OOB Estimated Error is a low 0.57%. Hence, overall we have sufficient confidence in the prediction model to predict classe for the 20 quiz/test cases.
+
+```{r}
+myModel$finalModel
+varImp(myModel)
+```
+
+## Validation
+
+The accuracy of the model by predicting with the Validation/Quiz set supplied in the test file.
+
+```{r}
+print(predict(myModel, newdata=Quiz.df))
+```
